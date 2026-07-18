@@ -1,0 +1,9 @@
+# Railyard
+node_modules
+.next
+data
+.worktrees
+tickets
+*.db
+.DS_Store
+.env*.local

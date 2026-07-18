@@ -1,0 +1,16 @@
+---
+description: Keep docs/SPEC.md current when Railyard behaviour changes
+alwaysApply: true
+---
+
+# Railyard SPEC maintenance
+
+[`docs/SPEC.md`](docs/SPEC.md) is the canonical product/architecture specification.
+
+When you implement or change features in this repo (orchestrator, board UI, workstreams, routing, runtimes, APIs, settings, security, jobs, connectors):
+
+1. Update `docs/SPEC.md` in the same change set — matching sections and the Version date.
+2. Update `README.md` / focused `docs/*.md` if the operator-facing entry points changed.
+3. Do not claim unverified build/test results in SPEC.
+
+If a task is docs-only for SPEC, still leave the Version date accurate.

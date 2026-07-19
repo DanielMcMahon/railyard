@@ -458,6 +458,7 @@ Railyard/
 |---|---|---|
 | GET | `/api/board` | Settings, boards, activeBoard, visible columns, tickets (board-scoped), agents, workstreams, dayCost, ticketCosts |
 | GET/POST | `/api/boards` | List / create / update / activate / delete boards |
+| GET | `/api/fs/browse` | Folder explorer under allowed repo roots (`?cwd=`) |
 | PATCH/POST | `/api/tickets` | create, move, resume/retry, schedule, update, delete, **approve**, **requestChanges**, **reject** |
 | GET/POST | `/api/actions` | Human ActionRequest queue (list open / resolve) |
 | GET/POST | `/api/alerts` | Workflow alert feed (list / acknowledge) |

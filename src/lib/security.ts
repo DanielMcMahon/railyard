@@ -63,6 +63,19 @@ function defaultAllowedRepoRoots(): string[] {
   return [path.join(home, "Documents"), home].filter(Boolean);
 }
 
+/** Roots where board repoPath may live (Documents preferred, then home). */
+export function getAllowedRepoRoots(): string[] {
+  return defaultAllowedRepoRoots()
+    .map((r) => {
+      try {
+        return fs.existsSync(r) ? fs.realpathSync(r) : path.resolve(r);
+      } catch {
+        return path.resolve(r);
+      }
+    })
+    .filter((r, i, arr) => arr.indexOf(r) === i);
+}
+
 /** Empty repoPath = sandbox OK. Otherwise must be a real git repo under allowed roots. */
 export function assertSafeRepoPath(
   repoPath: string,

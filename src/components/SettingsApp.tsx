@@ -6,6 +6,7 @@ import type { BoardDef, BoardSettings } from "@/lib/types";
 import { Shell } from "./Shell";
 import { ProvidersApp } from "./ProvidersApp";
 import { ConnectorsApp } from "./ConnectorsApp";
+import { FolderPicker } from "./FolderPicker";
 
 type TabId = "board" | "boards" | "providers" | "connectors";
 
@@ -402,6 +403,7 @@ function BoardsPanel() {
   });
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   const refresh = useCallback(async () => {
     const [bRes, wRes] = await Promise.all([
@@ -652,12 +654,25 @@ function BoardsPanel() {
             />
           </Field>
           <Field label="Repo path (absolute)">
-            <input
-              className="field"
-              value={draft.repoPath}
-              placeholder="/Users/you/Documents/Gitea/BloodBike/Web"
-              onChange={(e) => setDraft({ ...draft, repoPath: e.target.value })}
-            />
+            <div className="flex gap-2">
+              <input
+                className="field"
+                value={draft.repoPath}
+                placeholder="/Users/you/Documents/Gitea/BloodBike/Web"
+                onChange={(e) => setDraft({ ...draft, repoPath: e.target.value })}
+              />
+              <button
+                type="button"
+                className="shrink-0 rounded-xl border border-[var(--rail-line)] bg-white/70 px-3 py-2 text-sm font-medium"
+                onClick={() => setPickerOpen(true)}
+              >
+                Browse…
+              </button>
+            </div>
+            <p className="mt-1 text-[11px] opacity-50">
+              Leave empty for the demo sandbox. Browse opens a folder explorer under Documents /
+              home; only folders with <code>.git</code> can be selected.
+            </p>
           </Field>
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="Base branch">
@@ -755,6 +770,16 @@ function BoardsPanel() {
           </div>
         </div>
       )}
+
+      <FolderPicker
+        open={pickerOpen}
+        initialPath={draft.repoPath || undefined}
+        onClose={() => setPickerOpen(false)}
+        onSelect={(absolutePath) => {
+          setDraft((d) => ({ ...d, repoPath: absolutePath }));
+          setPickerOpen(false);
+        }}
+      />
 
       <style jsx global>{`
         .field {

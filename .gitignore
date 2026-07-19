@@ -1,9 +1,11 @@
 # Railyard
-node_modules
-.next
-data
-.worktrees
-tickets
+node_modules/
+.next/
+/data/
+/.worktrees/
+/tickets/
+/Archive/
 *.db
 .DS_Store
 .env*.local
+tsconfig.tsbuildinfo

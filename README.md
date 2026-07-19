@@ -1,6 +1,6 @@
 # Railyard
 
-Local-only **agent fleet control plane**: workstreams, review-first Complete, cost budgets, command gates (e.g. `dotnet test`), and swappable harnesses (demo / OpenCode / Cursor stub / command).
+Local-only **agent fleet control plane**: workflow graphs, human inbox (actions + alerts), immutable archives, review-first Complete, validators, and swappable harnesses.
 
 ## Run it
 
@@ -15,25 +15,29 @@ Open **http://127.0.0.1:3000** (loopback only — see `docs/SECURITY.md`).
 
 ## Try this
 
-1. **Workstream** dropdown — Feature, Bug, Research, or **.NET feature** (includes a `dotnet test` command stage).
+1. **Workstream** dropdown — Feature, Bug, Research, or **.NET feature** (build + test validators).
 2. Drag a ticket through agent stages — demo/runtime runs and auto-advances within the stream.
 3. Pipeline ends in **Review** (`pending_review`), not auto-PR. Use **Approve & finish**, **Request changes**, or **Reject**.
-4. Configure **onFailure / onSuccess** per stage (and Request-changes → planner) under Workstreams — see `docs/ROUTING.md`.
+4. Configure **onFailure / onSuccess** per stage (and Request-changes → planner) under Workstreams — see `docs/ROUTING.md` and `docs/WORKFLOW.md`.
 5. Watch **day $** in the board header and cost chips on cards (Settings → budgets + hard-stop).
 6. **Workstreams** — edit stages; add **+ dotnet verify** command gates; create `kind: job` streams with cron.
 7. **Jobs** — tick cron job streams (`POST /api/jobs/tick`).
 8. **Settings** — providers, connectors, budgets, sub-agent gates. ADO import: `POST /api/import` `{ "action": "ado" }`.
+9. **Workflow tests** — `npm test` (graph routing, validators, budget/spawn gates, event replay).
 
 ## Layout
 
 | Path | Role |
 |---|---|
 | `agents/*.md` | Agent prompts (shared library) |
-| `workstreams/*.md` | Pipeline / job templates (agent + command stages) |
+| `workstreams/*.md` | Pipeline / job templates (agent + command + validator stages) |
 | `tickets/*.md` | Local ticket copies |
-| `data/store.json` | Board state |
+| `data/store.json` | Board state + workflow events |
+| `src/lib/workflow/` | Graph engine, AgentResult, validators, events, tests |
 | `src/lib/runtimes/` | Harness registry (`demo`, `opencode`, `cursor`, `command`) |
 | `docs/SPEC.md` | **Full product & technical specification** (keep current) |
+| `docs/WORKFLOW.md` | Graph / AgentResult / validators / events |
+| `docs/ARCHIVE.md` | Human inbox, alerts, immutable archives |
 | `docs/ROUTING.md` | Success/failure stage routing + agent fences |
 | `docs/ROADMAP.md` | Phased control-plane roadmap |
 | `docs/JOB_STREAMS.md` | Job stream design |

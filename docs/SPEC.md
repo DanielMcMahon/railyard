@@ -1,6 +1,6 @@
 # Railyard — Full Product & Technical Specification
 
-**Version:** as of 2026-07-18  
+**Version:** as of 2026-07-19 (human inbox + immutable archives)  
 **Repository:** `/Users/user/Documents/Railyard`  
 **Audience:** operators, contributors, external model review (product + architecture + behaviour)
 
@@ -11,6 +11,8 @@ This file is the **canonical** description of what Railyard is and does. Keep it
 | When you change… | Update in SPEC… |
 |---|---|
 | Board / review / routing / spawn behaviour | §§ 6–9, 19–20 |
+| Workflow graph / AgentResult / validators / events / workflow tests | § 6.7, `docs/WORKFLOW.md` |
+| Human inbox / alerts / archives | § 6.8, `docs/ARCHIVE.md` |
 | Settings or budgets | § 18 |
 | APIs or pages | §§ 5, 17 |
 | Harnesses / connectors / jobs | §§ 6.6, 12–14 |
@@ -19,13 +21,13 @@ This file is the **canonical** description of what Railyard is and does. Keep it
 | New workstreams or agents that change product story | §§ 6.3–6.4 |
 
 Also bump the **Version** date at the top when you edit this file.  
-Cross-link detail docs (`ROUTING`, `SUB_AGENTS`, `SECURITY`, `JOB_STREAMS`, `ROADMAP`) rather than duplicating long protocols.
+Cross-link detail docs (`WORKFLOW`, `ARCHIVE`, `ROUTING`, `SUB_AGENTS`, `SECURITY`, `JOB_STREAMS`, `ROADMAP`) rather than duplicating long protocols.
 
 ---
 
 ## 1. One-sentence definition
 
-**Railyard is a local-only agent fleet control plane:** a kanban board where *tickets* own intent, *workstreams* define policy (stages, routing, git, complete actions), and *agents* are swappable workers executed by pluggable harnesses (OpenCode, demo, Cursor stub, shell commands) under human approve gates, budgets, and spawn limits.
+**Railyard is a local-only agent fleet control plane:** a kanban board where *tickets* own intent, *workstreams* define workflow graphs (stages, validators, routing), and *agents* are swappable workers executed by pluggable harnesses under structured `AgentResult` contracts, human approve gates, budgets, and spawn limits.
 
 ---
 
@@ -52,10 +54,13 @@ Tools like Vibe Kanban, Conductor, Emdash emphasize parallel runners and review 
 | Differentiator | Behaviour |
 |---|---|
 | Workstreams | Named pipelines/jobs with stages + policies |
+| Workflow graphs | Non-linear execution (branch/fail/retry/validate); kanban is a projection |
+| Structured AgentResult | Orchestrator routes on contracts, not markdown parsing |
 | Gated sub-agents | Spawn→resume with hard caps |
-| .NET-native verify | Non-LLM `command` stages (`dotnet test`, etc.) |
+| .NET-native verify | Validator / command stages (`dotnet build` / `dotnet test`) |
 | Review-first Complete | Human Approve / Request changes / Reject before prune/PR |
 | Stage routing | Configurable onSuccess / onFailure / request-changes targets |
+| Event audit | Append-only workflow events + replay projection |
 | Jobs | `kind: job` cron tick + single-runner queue |
 
 ---
@@ -89,6 +94,7 @@ Tools like Vibe Kanban, Conductor, Emdash emphasize parallel runners and review 
 - `npm run dev` → `next dev --hostname 127.0.0.1`
 - `npm run start` → `next start --hostname 127.0.0.1`
 - `npm run db:seed` → `tsx scripts/seed.ts`
+- `npm run test` → `tsx --test src/lib/workflow/**/*.test.ts`
 - `npm run build` → `next build`
 
 **Default URL:** `http://127.0.0.1:3000`
@@ -100,12 +106,14 @@ Tools like Vibe Kanban, Conductor, Emdash emphasize parallel runners and review 
 | Route | Purpose |
 |---|---|
 | `/` | **Board** — workstream viewport, kanban columns, ticket cards, drawer |
+| `/inbox` | **Human inbox** — Action Requests + workflow Alerts feed |
+| `/archive` | **Archive** — searchable immutable case files / execution reports |
 | `/agents` | Agent library CRUD (markdown prompts under `agents/`) |
 | `/workstreams` | Pipeline/job templates: stages, git, complete action, routing |
 | `/jobs` | Job stream queue + **Tick now** |
 | `/settings` | Board settings, providers, connectors (tabs; `/providers` & `/connectors` redirect) |
 
-**Shell nav:** Board · Agents · Workstreams · Jobs · Settings
+**Shell nav:** Board · Inbox · Archive · Agents · Workstreams · Jobs · Settings
 
 ---
 
@@ -150,14 +158,15 @@ Markdown under `workstreams/*.md`:
 | Field | Meaning |
 |---|---|
 | `kind` | `pipeline` (kanban stages) or `job` (cron/single-runner) |
-| `stages` | Ordered list of agent ids and/or command stage objects |
+| `stages` | Ordered list of agent ids, command stages, and/or validator stages (translated to a workflow graph at runtime) |
 | `git` | Whether to use per-ticket worktrees |
 | `completeAction` | `commit_and_pr` \| `note_only` \| `connector_reply` |
 | `defaultLabels` | Applied on create |
 | `trigger` | Jobs: e.g. `{ type: cron, expression: "*/30 * * * *" }` |
 | `onRequestChanges` | Agent id for human Request changes |
 | `defaultOnFailure` | Fallback failure route agent id |
-| Per-stage `onFailure` / `onSuccess` | See Routing |
+| Per-stage `onFailure` / `onSuccess` | See Routing / WORKFLOW |
+| Optional `graph:` | Explicit graph override (when present) |
 
 **Shipped workstreams**
 
@@ -165,7 +174,7 @@ Markdown under `workstreams/*.md`:
 |---|---|---|
 | `feature` | pipeline | planner → implementer → reviewer; fail→planner; success→review |
 | `bug` | pipeline | triage → reproduce → fix → verify; fail→triage |
-| `dotnet-feature` | pipeline | planner → implementer → `dotnet test` command → reviewer |
+| `dotnet-feature` | pipeline | planner → implementer → build/test **validators** → reviewer |
 | `research` | pipeline | stages empty / note_only oriented |
 | `demo-job` | job | cron demo with writeup runner |
 
@@ -185,6 +194,36 @@ Stored fields include: status, log, parent/depth/task (spawn tree), model, estim
 | `command` | Runs argv in worktree cwd (exit code = success/fail) |
 
 Registry: `src/lib/runtimes/registry.ts`. Settings `demoMode` forces demo for agent runs.
+
+### 6.7 Workflow engine (vNext foundations)
+
+Full detail: `docs/WORKFLOW.md`. Module: `src/lib/workflow/`.
+
+| Concept | Role |
+|---|---|
+| **WorkflowGraph** | Nodes (`agent` / `command` / `validator` / `human` / `start` / `end` / …) + conditioned edges |
+| **Linear YAML → graph** | Existing `stages:` lists auto-translate via `stagesToGraph()` (START → stages → human Review → END) |
+| **AgentResult** | Structured `{ status, summary, confidence, outputs, artifacts, metadata }` — orchestrator routes on this only; markdown logs stay for humans |
+| **Validators** | First-class stages (`dotnet_build`, `dotnet_test`, `review`, `command`) emitting `ValidationResult` → AgentResult with `metadata.validation` |
+| **Events** | Append-only `events[]` in `data/store.json` (`StageStarted`, `StageCompleted`, `StageFailed`, `Review*`, `BudgetExceeded`, `SpawnRejected`, …) |
+| **Replay** | `projectWorkflowState(ticketId)` folds events into current node/status |
+| **Tests** | `npm test` — pure transition + required scenarios (failure routing, approval gate, budget, spawn limits, replay) |
+
+Kanban columns remain a **projection** of executable nodes; execution decisions use the graph + AgentResult.
+
+### 6.8 Human inbox, alerts, and archives
+
+Full detail: `docs/ARCHIVE.md`.
+
+| Concept | Role |
+|---|---|
+| **ActionRequest** | First-class human rubber-stamp / permission / error queue (`approval`, `permission`, `error`, `question`, `verification`) with severity + buttons |
+| **Human Inbox** | `/inbox` — open Action Requests and unacked Alerts (Needs Human column remains for board parking) |
+| **WorkflowAlert** | Notification feed independent of success/failure (budget, review, validation, needs human, …) |
+| **Immutable archive** | On Approve & finish → `Archive/YYYY/MM/DD/<ticketId>/` case file (`summary.md`, `timeline.json`, `workflow.json`, logs, artifacts, diffs, `manifest.json`) |
+| **Archive search** | `/archive` + `data/archive-index.json` — filter by date, agent, workstream, cost, human approval, etc. |
+
+If the live store is deleted later, an archive folder remains a self-contained audit package.
 
 ---
 
@@ -206,14 +245,14 @@ Registry: `src/lib/runtimes/registry.ts`. Settings `demoMode` forces demo for ag
 
 ### 7.3 Stage execution (happy path)
 
-1. Resolve workstream + stage (agent or command).
+1. Resolve workstream graph + current node (agent, command, or validator).
 2. If `git`: ensure worktree under `.worktrees/<ticketId>`, set branch, lock.
-3. Budget check (hard-stop if enabled and exceeded).
-4. Run agent (with spawn loops) or command argv.
-5. Persist run log/cost/events/summary/promptHash.
-6. On failure → route via onFailure / defaultOnFailure / Needs human.
-7. On `railyard-rework` fence → treat as soft failure route.
-8. On success → note on ticket; honor `railyard-advance` fence or stage `onSuccess`; else linear next; end → `pending_review`.
+3. Budget check (hard-stop if enabled and exceeded → `BudgetExceeded` event).
+4. Emit `StageStarted`; run agent (with spawn loops), command, or validator.
+5. Convert harness output → **AgentResult** (`railyard-result` fence preferred; legacy rework/advance fences still map).
+6. Persist run log/cost/events/summary/promptHash (markdown for humans).
+7. `applyTransition` / `decideTransition` evaluates graph edges from AgentResult (success / failure / retry / needs_human / validation_*).
+8. Emit transition events (`StageCompleted` / `StageFailed` / `StageEntered` / `ReviewRequested`, …); move ticket to next column or park Review.
 
 ### 7.4 Review gate (human)
 
@@ -242,14 +281,17 @@ When approved and workstream `completeAction === commit_and_pr` and `git`:
 
 ## 8. Stage routing (success & failure)
 
-Full detail: `docs/ROUTING.md`.
+Full detail: `docs/ROUTING.md` and `docs/WORKFLOW.md`.
+
+Legacy YAML routing still works and is **compiled into graph edges** at load time.
 
 ### Priority (highest first)
 
-1. Agent fence for this run (`railyard-rework` / `railyard-advance`)
-2. Per-stage `onFailure` / `onSuccess`
-3. Workstream `defaultOnFailure` / `onRequestChanges`
-4. Defaults: failure → Needs human; success → next stage; last → Review
+1. Structured `AgentResult` (`railyard-result`) including status `retry` / `needs_human`
+2. Agent fence for this run (`railyard-rework` / `railyard-advance`) mapped into AgentResult
+3. Per-stage `onFailure` / `onSuccess` (as graph edges)
+4. Workstream `defaultOnFailure` / `onRequestChanges`
+5. Defaults: failure → Needs human; success → next stage; last → Review
 
 ### onSuccess values
 
@@ -397,6 +439,9 @@ Railyard/
 |---|---|---|
 | GET | `/api/board` | Settings, visible columns, tickets, agents, workstreams, dayCost, ticketCosts |
 | PATCH/POST | `/api/tickets` | create, move, resume/retry, schedule, update, delete, **approve**, **requestChanges**, **reject** |
+| GET/POST | `/api/actions` | Human ActionRequest queue (list open / resolve) |
+| GET/POST | `/api/alerts` | Workflow alert feed (list / acknowledge) |
+| GET | `/api/archive` | Search archive index or load case-file summary |
 | GET/PUT | `/api/tickets/[id]` | Detail (ticket, markdown, runs, cost) |
 | GET | `/api/tickets/[id]/diff` | Paths & file diffs |
 | GET/POST | `/api/agents` | Agent library |
@@ -439,18 +484,18 @@ Primary file: `src/lib/orchestrator.ts`
 
 | Function | Role |
 |---|---|
-| `runAgentOnTicket` | Execute current stage |
-| `runStageWithSpawns` | Spawn→resume loops |
-| `autoAdvance` | Linear next / park Review |
-| `routeOnSuccess` | onSuccess / advance fence |
-| `routeTicketAfterFailure` | onFailure / rework / request-changes |
+| `runAgentOnTicket` | Execute current stage; convert → AgentResult; `applyTransition` |
+| `runStageWithSpawns` | Spawn→resume loops (`SpawnRejected` events on gate rejects) |
+| `applyTransition` / `decideTransition` | Graph routing + event emission |
+| `autoAdvance` | Legacy linear next / park Review (fallback) |
+| `routeTicketAfterFailure` | Legacy failure path when no graph |
 | `parkForReview` | `pending_review` |
-| `approveTicket` / `requestChangesTicket` / `rejectTicket` | Review actions |
+| `approveTicket` / `requestChangesTicket` / `rejectTicket` | Review actions (emit Review* events) |
 | `completeTicket` | Approved finish (git/PR/ADO) |
 | `scheduleBoard` / `scheduleColumn` | Queue runners |
 | `getTicketDetail` | Drawer payload |
 
-Supporting libs: `board`, `workstreams`, `spawn`, `rework`, `cost`, `git`, `worktree-lock`, `github-pr`, `ado`, `jobs`, `security`, `runtimes/*`.
+Supporting libs: `workflow/*`, `board`, `workstreams`, `spawn`, `rework`, `cost`, `git`, `worktree-lock`, `github-pr`, `ado`, `jobs`, `security`, `runtimes/*`.
 
 ---
 
@@ -463,6 +508,10 @@ Supporting libs: `board`, `workstreams`, `spawn`, `rework`, `cost`, `git`, `work
 - Cost chips + day spend
 - Card actions: Approve / Changes / Reject; Resume / Retry
 - Drawer: preview/edit markdown, paths & diff, live run log, run timeline, cost, failure reason, review actions, prevent auto-advance, delete
+- **Workstreams flow diagram** — SVG graph of stages + ok/fail/approve edges (list + live editor)
+- **Human Inbox** — Action Requests + Alerts (`/inbox`)
+- **Archive** — searchable immutable case files (`/archive`)
+- **Reorder stage columns** — drag handle (⠿) or ← → on agent columns (updates workstream stage order)
 
 ---
 
@@ -478,7 +527,10 @@ Supporting libs: `board`, `workstreams`, `spawn`, `rework`, `cost`, `git`, `work
 8. **No Docker sandbox** for command stages.
 9. **Budget costs** are estimates, not provider invoices.
 10. **Parallelism** is best-effort (locks + one-per-worktree), not a distributed fleet.
-11. **Tests** — no large automated orchestrator E2E suite claimed; `tsc --noEmit` used as type gate.
+11. **True parallel graph branches** (fan-out/fan-in) are modeled partially; engine currently selects one next edge.
+12. **Delay / timeout edges** exist in the type model; little/no execution yet.
+13. **Workflow tests** cover pure graph transitions + budget/spawn gates (`npm test`); not a full board E2E suite.
+15. **Archive prompts** store hashes/metadata only — not full prompt bodies with possible secrets.
 
 ---
 
@@ -487,21 +539,22 @@ Supporting libs: `board`, `workstreams`, `spawn`, `rework`, `cost`, `git`, `work
 ```
 Spec (ticket markdown)
     ↓
-Plan (workstream stages + routing policy)
+Plan (workstream → WorkflowGraph + routing policy)
     ↓
-Run (harness: OpenCode / demo / command / Cursor stub)
+Run (harness → AgentResult; markdown log for humans)
     ├─ optional gated sub-agents
+    ├─ validators (build/test/review)
     ├─ cost accounting + hard-stop
-    └─ success/failure/fence routing
+    └─ graph edge evaluation + workflow events
     ↓
 Review (human: approve / request changes / reject)
     ↓
 Close the loop (commit, prune, gh PR, ADO write-back)
 ```
 
-**Operator owns:** which agents, which stages, where failures go, spend limits, when PR is allowed.  
+**Operator owns:** which agents, which stages/validators, where failures go, spend limits, when PR is allowed.  
 **Agents own:** work inside the worktree (and tools their harness permits).  
-**Railyard owns:** queueing, policy enforcement, audit logs/runs, and the human gate.
+**Railyard owns:** graph orchestration, policy enforcement, event audit/replay, and the human gate.
 
 ---
 
@@ -524,6 +577,8 @@ Close the loop (commit, prune, gh PR, ADO write-back)
 |---|---|
 | `README.md` | Quick start |
 | `docs/ROADMAP.md` | Phased shipped scope |
+| `docs/WORKFLOW.md` | Graph engine, AgentResult, validators, events, tests |
+| `docs/ARCHIVE.md` | Human inbox, alerts, immutable archives |
 | `docs/ROUTING.md` | onSuccess / onFailure / fences |
 | `docs/SUB_AGENTS.md` | Spawn protocol + caps |
 | `docs/JOB_STREAMS.md` | Jobs |

@@ -2,22 +2,25 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import type { BoardSettings } from "@/lib/types";
+import type { BoardDef, BoardSettings } from "@/lib/types";
 import { Shell } from "./Shell";
 import { ProvidersApp } from "./ProvidersApp";
 import { ConnectorsApp } from "./ConnectorsApp";
 
-type TabId = "board" | "providers" | "connectors";
+type TabId = "board" | "boards" | "providers" | "connectors";
 
 const TABS: { id: TabId; label: string }[] = [
-  { id: "board", label: "Board" },
+  { id: "boards", label: "Boards" },
+  { id: "board", label: "Runtime" },
   { id: "providers", label: "Providers" },
   { id: "connectors", label: "Connectors" },
 ];
 
 function parseTab(raw: string | null): TabId {
-  if (raw === "providers" || raw === "connectors" || raw === "board") return raw;
-  return "board";
+  if (raw === "providers" || raw === "connectors" || raw === "board" || raw === "boards") {
+    return raw;
+  }
+  return "boards";
 }
 
 export function SettingsApp() {
@@ -28,7 +31,7 @@ export function SettingsApp() {
 
   function setTab(next: TabId) {
     const params = new URLSearchParams(searchParams.toString());
-    if (next === "board") params.delete("tab");
+    if (next === "boards") params.delete("tab");
     else params.set("tab", next);
     const q = params.toString();
     router.replace(q ? `${pathname}?${q}` : pathname, { scroll: false });
@@ -44,7 +47,7 @@ export function SettingsApp() {
           Settings
         </h2>
         <p className="text-sm opacity-60">
-          Board behaviour, AI providers, and ticket connectors in one place.
+          Boards (one repo each), runtime budgets, AI providers, and connectors.
         </p>
       </div>
 
@@ -70,6 +73,7 @@ export function SettingsApp() {
         ))}
       </div>
 
+      {tab === "boards" && <BoardsPanel />}
       {tab === "board" && <BoardSettingsPanel onGoTab={setTab} />}
       {tab === "providers" && <ProvidersApp embedded />}
       {tab === "connectors" && <ConnectorsApp embedded />}
@@ -150,44 +154,18 @@ function BoardSettingsPanel({ onGoTab }: { onGoTab: (tab: TabId) => void }) {
   return (
     <div className="mx-auto w-full max-w-2xl">
       <p className="mb-6 text-sm opacity-60">
-        Default provider uses the{" "}
+        Global runtime, budgets, and spawn gates. Repo paths live on each{" "}
+        <button type="button" className="underline" onClick={() => onGoTab("boards")}>
+          Board
+        </button>
+        . Default provider uses the{" "}
         <button type="button" className="underline" onClick={() => onGoTab("providers")}>
           Providers
         </button>{" "}
-        tab. Changing it refreshes the model list. Saving syncs the model onto that provider.
+        tab.
       </p>
 
       <div className="space-y-5 rounded-2xl border border-[var(--rail-line)] bg-white/55 p-5 backdrop-blur-sm">
-        <Field label="Repo path">
-          <input
-            className="field"
-            value={settings.repoPath}
-            placeholder="Leave empty to use demo sandbox repo"
-            onChange={(e) => setSettings({ ...settings, repoPath: e.target.value })}
-          />
-        </Field>
-        <Field label="Base branch">
-          <input
-            className="field"
-            value={settings.baseRef}
-            onChange={(e) => setSettings({ ...settings, baseRef: e.target.value })}
-          />
-        </Field>
-        <Field label="Worktree root">
-          <input
-            className="field"
-            value={settings.worktreeRoot}
-            onChange={(e) => setSettings({ ...settings, worktreeRoot: e.target.value })}
-          />
-        </Field>
-        <Field label="Branch prefix">
-          <input
-            className="field"
-            value={settings.branchPrefix}
-            onChange={(e) => setSettings({ ...settings, branchPrefix: e.target.value })}
-          />
-        </Field>
-
         <Field label="Default provider / runtime">
           <select
             className="field"
@@ -391,6 +369,393 @@ function BoardSettingsPanel({ onGoTab }: { onGoTab: (tab: TabId) => void }) {
           {error && <span className="text-sm text-[var(--rail-signal)]">{error}</span>}
         </div>
       </div>
+      <style jsx global>{`
+        .field {
+          width: 100%;
+          border-radius: 0.75rem;
+          border: 1px solid var(--rail-line);
+          background: rgba(255, 255, 255, 0.7);
+          padding: 0.65rem 0.85rem;
+          font-size: 0.9rem;
+        }
+      `}</style>
+    </div>
+  );
+}
+
+function BoardsPanel() {
+  const [boards, setBoards] = useState<BoardDef[]>([]);
+  const [activeBoardId, setActiveBoardId] = useState("default");
+  const [workstreams, setWorkstreams] = useState<{ id: string; name: string }[]>([]);
+  const [editing, setEditing] = useState<BoardDef | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [draft, setDraft] = useState({
+    id: "",
+    name: "",
+    color: "#3d5a80",
+    repoPath: "",
+    baseRef: "main",
+    worktreeRoot: "",
+    branchPrefix: "agent/",
+    workstreamIds: [] as string[],
+    activeWorkstreamId: "feature",
+  });
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const refresh = useCallback(async () => {
+    const [bRes, wRes] = await Promise.all([
+      fetch("/api/boards", { cache: "no-store" }),
+      fetch("/api/workstreams", { cache: "no-store" }),
+    ]);
+    const bJson = (await bRes.json()) as {
+      boards: BoardDef[];
+      activeBoardId: string;
+    };
+    const wJson = (await wRes.json()) as {
+      workstreams: { id: string; name: string }[];
+    };
+    setBoards(bJson.boards || []);
+    setActiveBoardId(bJson.activeBoardId || "default");
+    setWorkstreams(
+      (wJson.workstreams || []).map((w) => ({ id: w.id, name: w.name })),
+    );
+  }, []);
+
+  useEffect(() => {
+    refresh().catch((e) => setError(String(e)));
+  }, [refresh]);
+
+  function startCreate() {
+    setCreating(true);
+    setEditing(null);
+    setDraft({
+      id: "",
+      name: "",
+      color: "#c45c26",
+      repoPath: "",
+      baseRef: "main",
+      worktreeRoot: "",
+      branchPrefix: "agent/",
+      workstreamIds: workstreams.filter((w) => w.id !== "demo-job").map((w) => w.id),
+      activeWorkstreamId: workstreams.find((w) => w.id === "feature")?.id || workstreams[0]?.id || "feature",
+    });
+    setError(null);
+  }
+
+  function startEdit(b: BoardDef) {
+    setCreating(false);
+    setEditing(b);
+    setDraft({
+      id: b.id,
+      name: b.name,
+      color: b.color,
+      repoPath: b.repoPath || "",
+      baseRef: b.baseRef || "main",
+      worktreeRoot: b.worktreeRoot || "",
+      branchPrefix: b.branchPrefix || "agent/",
+      workstreamIds: [...(b.workstreamIds || [])],
+      activeWorkstreamId: b.activeWorkstreamId || "feature",
+    });
+    setError(null);
+  }
+
+  function toggleWs(id: string) {
+    setDraft((d) => {
+      const has = d.workstreamIds.includes(id);
+      const workstreamIds = has
+        ? d.workstreamIds.filter((x) => x !== id)
+        : [...d.workstreamIds, id];
+      const activeWorkstreamId = workstreamIds.includes(d.activeWorkstreamId)
+        ? d.activeWorkstreamId
+        : workstreamIds[0] || "feature";
+      return { ...d, workstreamIds, activeWorkstreamId };
+    });
+  }
+
+  async function save() {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/boards", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: creating ? "create" : "update",
+          id: draft.id,
+          name: draft.name,
+          color: draft.color,
+          repoPath: draft.repoPath,
+          baseRef: draft.baseRef,
+          worktreeRoot: draft.worktreeRoot || undefined,
+          branchPrefix: draft.branchPrefix || undefined,
+          workstreamIds: draft.workstreamIds,
+          activeWorkstreamId: draft.activeWorkstreamId,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Save failed");
+      setCreating(false);
+      setEditing(null);
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function activate(id: string) {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/boards", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "activate", id }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Activate failed");
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function remove(id: string) {
+    if (boards.length <= 1) {
+      setError("Cannot delete the last board");
+      return;
+    }
+    if (!confirm(`Delete board "${id}"? Its tickets will move to another board.`)) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/boards", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "delete", id }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Delete failed");
+      if (editing?.id === id) setEditing(null);
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const showForm = creating || editing;
+
+  return (
+    <div className="mx-auto w-full max-w-3xl space-y-5">
+      <p className="text-sm opacity-60">
+        Each board is a named workspace with its own git repo and selected workstreams. Tickets stay
+        isolated per board — switch boards on the kanban to work Web vs Mobile separately.
+      </p>
+
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={startCreate}
+          disabled={busy}
+          className="rounded-full px-4 py-2 text-sm font-medium"
+          style={{ background: "#14212b", color: "#f3eee6" }}
+        >
+          New board
+        </button>
+        {error && <span className="self-center text-sm text-[var(--rail-signal)]">{error}</span>}
+      </div>
+
+      <div className="space-y-3">
+        {boards.map((b) => (
+          <div
+            key={b.id}
+            className="rounded-2xl border border-[var(--rail-line)] bg-white/55 p-4 backdrop-blur-sm"
+          >
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span
+                    className="inline-block h-3 w-3 rounded-full"
+                    style={{ background: b.color }}
+                  />
+                  <span className="font-semibold">{b.name}</span>
+                  <span className="text-xs opacity-50" style={{ fontFamily: "var(--font-mono)" }}>
+                    {b.id}
+                  </span>
+                  {b.id === activeBoardId && (
+                    <span className="rounded-full bg-[var(--rail-steel)]/15 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide">
+                      Active
+                    </span>
+                  )}
+                </div>
+                <p className="mt-1 text-xs opacity-60" style={{ fontFamily: "var(--font-mono)" }}>
+                  {b.repoPath || "(sandbox)"} · {b.baseRef} · {b.workstreamIds.length} streams
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {b.id !== activeBoardId && (
+                  <button
+                    type="button"
+                    className="rounded-full border border-[var(--rail-line)] px-3 py-1 text-xs font-medium"
+                    disabled={busy}
+                    onClick={() => activate(b.id)}
+                  >
+                    Activate
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="rounded-full border border-[var(--rail-line)] px-3 py-1 text-xs font-medium"
+                  disabled={busy}
+                  onClick={() => startEdit(b)}
+                >
+                  Edit
+                </button>
+                <button
+                  type="button"
+                  className="rounded-full border border-[var(--rail-line)] px-3 py-1 text-xs font-medium text-[var(--rail-signal)]"
+                  disabled={busy || boards.length <= 1}
+                  onClick={() => remove(b.id)}
+                >
+                  Delete
+                </button>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {showForm && (
+        <div className="space-y-4 rounded-2xl border border-[var(--rail-line)] bg-white/70 p-5">
+          <h3 className="text-lg font-semibold">{creating ? "Create board" : `Edit ${editing?.name}`}</h3>
+          {creating && (
+            <Field label="Id (slug)">
+              <input
+                className="field"
+                value={draft.id}
+                placeholder="bloodbike-web"
+                onChange={(e) => setDraft({ ...draft, id: e.target.value })}
+              />
+            </Field>
+          )}
+          <Field label="Name">
+            <input
+              className="field"
+              value={draft.name}
+              onChange={(e) => setDraft({ ...draft, name: e.target.value })}
+            />
+          </Field>
+          <Field label="Repo path (absolute)">
+            <input
+              className="field"
+              value={draft.repoPath}
+              placeholder="/Users/you/Documents/Gitea/BloodBike/Web"
+              onChange={(e) => setDraft({ ...draft, repoPath: e.target.value })}
+            />
+          </Field>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Base branch">
+              <input
+                className="field"
+                value={draft.baseRef}
+                onChange={(e) => setDraft({ ...draft, baseRef: e.target.value })}
+              />
+            </Field>
+            <Field label="Color">
+              <input
+                className="field"
+                type="color"
+                value={draft.color}
+                onChange={(e) => setDraft({ ...draft, color: e.target.value })}
+              />
+            </Field>
+            <Field label="Branch prefix">
+              <input
+                className="field"
+                value={draft.branchPrefix}
+                onChange={(e) => setDraft({ ...draft, branchPrefix: e.target.value })}
+              />
+            </Field>
+            <Field label="Worktree root (optional)">
+              <input
+                className="field"
+                value={draft.worktreeRoot}
+                placeholder=".worktrees"
+                onChange={(e) => setDraft({ ...draft, worktreeRoot: e.target.value })}
+              />
+            </Field>
+          </div>
+          <div>
+            <span className="mb-2 block text-xs font-medium tracking-wide uppercase opacity-55">
+              Workstreams on this board
+            </span>
+            <div className="flex flex-wrap gap-2">
+              {workstreams.map((w) => {
+                const on = draft.workstreamIds.includes(w.id);
+                return (
+                  <button
+                    key={w.id}
+                    type="button"
+                    onClick={() => toggleWs(w.id)}
+                    className="rounded-full px-3 py-1.5 text-xs font-medium"
+                    style={
+                      on
+                        ? { background: "#14212b", color: "#f3eee6" }
+                        : {
+                            background: "rgba(255,255,255,0.6)",
+                            border: "1px solid var(--rail-line)",
+                          }
+                    }
+                  >
+                    {w.name}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <Field label="Default workstream">
+            <select
+              className="field"
+              value={draft.activeWorkstreamId}
+              onChange={(e) => setDraft({ ...draft, activeWorkstreamId: e.target.value })}
+            >
+              {draft.workstreamIds.map((id) => (
+                <option key={id} value={id}>
+                  {workstreams.find((w) => w.id === id)?.name || id}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <div className="flex gap-2 pt-2">
+            <button
+              type="button"
+              onClick={save}
+              disabled={busy || !draft.name.trim()}
+              className="rounded-full px-5 py-2.5 text-sm font-medium disabled:opacity-50"
+              style={{ background: "#14212b", color: "#f3eee6" }}
+            >
+              {creating ? "Create" : "Save"}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setCreating(false);
+                setEditing(null);
+              }}
+              className="rounded-full border border-[var(--rail-line)] px-4 py-2 text-sm"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
       <style jsx global>{`
         .field {
           width: 100%;

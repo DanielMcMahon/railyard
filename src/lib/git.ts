@@ -2,6 +2,7 @@ import { spawnSync } from "child_process";
 import fs from "fs";
 import path from "path";
 import { getSettings } from "./db";
+import { getActiveBoard, getBoard } from "./boards";
 import { WORKTREES_DIR, ensureDirs, ticketArtifactsDir } from "./paths";
 import type { ChangedFile, TicketRow } from "./types";
 import { assertSafeRepoPath } from "./security";
@@ -53,15 +54,20 @@ function ensureSandboxRepo(baseRef: string) {
 export function ensureTicketWorktree(ticket: TicketRow) {
   const settings = getSettings();
   ensureDirs();
-  const baseRef = settings.baseRef || "main";
-  // Empty repoPath → isolated sandbox so we never pollute the Railyard app repo.
+  const board =
+    (ticket.boardId && getBoard(ticket.boardId)) || getActiveBoard();
+  const baseRef = ticket.baseRef || board.baseRef || settings.baseRef || "main";
+  const branchPrefix = board.branchPrefix || settings.branchPrefix || "agent/";
+
+  // Priority: ticket.repoPath → board.repoPath → settings.repoPath → sandbox
   let repo: string;
-  if (settings.repoPath) {
-    repo = assertSafeRepoPath(settings.repoPath);
+  const candidate = (ticket.repoPath || board.repoPath || settings.repoPath || "").trim();
+  if (candidate) {
+    repo = assertSafeRepoPath(candidate);
   } else {
     repo = ensureSandboxRepo(baseRef);
   }
-  return ensureInRepo(repo, ticket, settings.branchPrefix, baseRef);
+  return ensureInRepo(repo, ticket, branchPrefix, baseRef);
 }
 
 function ensureInRepo(
@@ -187,6 +193,11 @@ export function resolveTicketRepo(ticket: TicketRow): string {
   if (ticket.repoPath && fs.existsSync(path.join(ticket.repoPath, ".git"))) {
     return ticket.repoPath;
   }
+  const board =
+    (ticket.boardId && getBoard(ticket.boardId)) || getActiveBoard();
+  if (board.repoPath && fs.existsSync(path.join(board.repoPath, ".git"))) {
+    return board.repoPath;
+  }
   const settings = getSettings();
   if (settings.repoPath && fs.existsSync(path.join(settings.repoPath, ".git"))) {
     return settings.repoPath;
@@ -254,7 +265,9 @@ export function readArtifactPatch(ticketId: string, file?: string): string | nul
 
 export function getTicketDiffPayload(ticket: TicketRow, file?: string) {
   const repo = resolveTicketRepo(ticket);
-  const baseRef = ticket.baseRef || getSettings().baseRef || "main";
+  const board =
+    (ticket.boardId && getBoard(ticket.boardId)) || getActiveBoard();
+  const baseRef = ticket.baseRef || board.baseRef || getSettings().baseRef || "main";
   const head = ticket.branch || ticket.headSha || "HEAD";
   const worktreeAlive =
     Boolean(ticket.worktreePath) &&

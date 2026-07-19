@@ -27,8 +27,8 @@ import {
   updateTicketMarkdown,
   writeTicketMarkdown,
 } from "@/lib/tickets-fs";
-import { getSettings } from "@/lib/db";
 import { getWorkstream } from "@/lib/workstreams";
+import { getActiveBoard, getActiveWorkstreamId } from "@/lib/boards";
 
 export const dynamic = "force-dynamic";
 
@@ -46,10 +46,10 @@ export async function POST(req: Request) {
   const inbox = listColumns().find((c) => c.kind === "inbox");
   if (!inbox) return NextResponse.json({ error: "No inbox" }, { status: 500 });
 
-  const settings = getSettings();
+  const board = getActiveBoard();
   const workstreamId =
     (body.workstreamId && String(body.workstreamId)) ||
-    settings.activeWorkstreamId ||
+    getActiveWorkstreamId() ||
     "feature";
   const ws = getWorkstream(workstreamId);
   const labels = Array.isArray(body.labels)
@@ -72,6 +72,7 @@ export async function POST(req: Request) {
     source: body.source || "local",
     externalId: body.externalId || body.adoId || null,
     workstreamId,
+    boardId: board.id,
   });
 
   insertTicket({
@@ -84,11 +85,12 @@ export async function POST(req: Request) {
     preventAutoAdvance: false,
     commentCount: body.commentCount ?? 0,
     workstreamId,
+    boardId: board.id,
     branch: null,
     worktreePath: null,
     lastWorktreePath: null,
-    repoPath: null,
-    baseRef: null,
+    repoPath: board.repoPath || null,
+    baseRef: board.baseRef || null,
     headSha: null,
     prUrl: null,
     failureReason: null,

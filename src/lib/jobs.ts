@@ -1,4 +1,4 @@
-import { getSettings, readStore, updateStore } from "./db";
+import { readStore, updateStore } from "./db";
 import { getWorkstream, listWorkstreams, stageColumnId } from "./workstreams";
 import {
   ensureWorkstreamsReady,
@@ -9,6 +9,7 @@ import {
   updateTicket,
 } from "./board";
 import { createLocalTicketId, updateTicketMarkdown, writeTicketMarkdown } from "./tickets-fs";
+import { getActiveBoard, getActiveWorkstreamId } from "./boards";
 
 type JobState = {
   lastTickAt: string | null;
@@ -82,6 +83,7 @@ export async function tickJobs(): Promise<{
     try {
       const inbox = listColumns().find((c) => c.kind === "inbox");
       if (!inbox) throw new Error("No inbox");
+      const board = getActiveBoard();
       const id = createLocalTicketId();
       const title = `[job] ${job.name} @ ${now.toISOString()}`;
       const filePath = writeTicketMarkdown({
@@ -92,7 +94,11 @@ export async function tickJobs(): Promise<{
         labels: [...job.defaultLabels, "job"],
         commentCount: 0,
       });
-      updateTicketMarkdown(filePath, { workstreamId: job.id, source: "job" });
+      updateTicketMarkdown(filePath, {
+        workstreamId: job.id,
+        boardId: board.id,
+        source: "job",
+      });
       insertTicket({
         id,
         adoId: null,
@@ -103,11 +109,12 @@ export async function tickJobs(): Promise<{
         preventAutoAdvance: false,
         commentCount: 0,
         workstreamId: job.id,
+        boardId: board.id,
         branch: null,
         worktreePath: null,
         lastWorktreePath: null,
-        repoPath: null,
-        baseRef: null,
+        repoPath: board.repoPath || null,
+        baseRef: board.baseRef || null,
         headSha: null,
         prUrl: null,
         failureReason: null,
@@ -138,7 +145,6 @@ export async function tickJobs(): Promise<{
 }
 
 export function listJobQueue() {
-  const settings = getSettings();
   const jobs = listWorkstreams().filter((w) => w.kind === "job");
   const tickets = listTickets().filter((t) =>
     jobs.some((j) => j.id === t.workstreamId) ||
@@ -152,7 +158,7 @@ export function listJobQueue() {
       stages: j.stages,
     })),
     tickets,
-    activeWorkstreamId: settings.activeWorkstreamId,
+    activeWorkstreamId: getActiveWorkstreamId(),
     state: readJobState(),
   };
 }

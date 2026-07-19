@@ -9,6 +9,7 @@ import {
 import { getSettings } from "@/lib/db";
 import { IMPORT_LIMITS } from "@/lib/security";
 import { importAdoWorkItems } from "@/lib/ado";
+import { getActiveBoard, getActiveWorkstreamId } from "@/lib/boards";
 
 export const dynamic = "force-dynamic";
 
@@ -22,7 +23,8 @@ function insertImportedItem(item: {
   source?: string;
 }) {
   const settings = getSettings();
-  const defaultWs = settings.activeWorkstreamId || "feature";
+  const board = getActiveBoard();
+  const defaultWs = getActiveWorkstreamId();
   const inbox = listColumns().find((c) => c.kind === "inbox");
   if (!inbox) throw new Error("No inbox");
 
@@ -45,6 +47,7 @@ function insertImportedItem(item: {
   });
   updateTicketMarkdown(filePath, {
     workstreamId,
+    boardId: board.id,
     source: item.source || "imported",
     externalId: item.adoId ?? null,
   });
@@ -58,11 +61,12 @@ function insertImportedItem(item: {
     preventAutoAdvance: settings.requireApproveForImportedTickets,
     commentCount: item.commentCount ?? 0,
     workstreamId,
+    boardId: board.id,
     branch: null,
     worktreePath: null,
     lastWorktreePath: null,
-    repoPath: null,
-    baseRef: null,
+    repoPath: board.repoPath || null,
+    baseRef: board.baseRef || null,
     headSha: null,
     prUrl: null,
     failureReason: null,

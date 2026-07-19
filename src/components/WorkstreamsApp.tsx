@@ -66,7 +66,11 @@ function patchStage(stages: StageDef[], key: string, patch: Partial<StageDef>): 
 }
 
 export function WorkstreamsApp() {
-  const [streams, setStreams] = useState<WorkstreamDef[]>([]);
+  const [streams, setStreams] = useState<
+    (WorkstreamDef & {
+      usedByBoards?: { id: string; name: string; color: string }[];
+    })[]
+  >([]);
   const [agents, setAgents] = useState<Omit<AgentDef, "prompt">[]>([]);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -78,7 +82,11 @@ export function WorkstreamsApp() {
       fetch("/api/workstreams", { cache: "no-store" }),
       fetch("/api/agents", { cache: "no-store" }),
     ]);
-    const wsJson = (await wsRes.json()) as { workstreams: WorkstreamDef[] };
+    const wsJson = (await wsRes.json()) as {
+      workstreams: (WorkstreamDef & {
+        usedByBoards?: { id: string; name: string; color: string }[];
+      })[];
+    };
     const agJson = (await agRes.json()) as { agents: AgentDef[] };
     setStreams(wsJson.workstreams || []);
     setAgents((agJson.agents || []).map(({ prompt: _p, ...a }) => a));
@@ -256,6 +264,23 @@ export function WorkstreamsApp() {
                   {" · "}
                   {ws.git ? "git" : "no-git"} · {ws.completeAction}
                 </div>
+                {(ws.usedByBoards || []).length > 0 && (
+                  <div className="mb-2 flex flex-wrap gap-1">
+                    {ws.usedByBoards!.map((b) => (
+                      <span
+                        key={b.id}
+                        className="rounded-full px-2 py-0.5 text-[10px] font-medium"
+                        style={{
+                          background: `${b.color}22`,
+                          color: "#14212b",
+                          border: `1px solid ${b.color}55`,
+                        }}
+                      >
+                        {b.name}
+                      </span>
+                    ))}
+                  </div>
+                )}
                 <WorkflowFlowDiagram
                   workstream={ws}
                   accent={ws.color}

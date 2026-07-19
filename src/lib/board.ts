@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { getSettings, readStore, updateStore, saveSettings } from "./db";
+import { getSettings, readStore, updateStore } from "./db";
 import { getAgent } from "./agents";
 import {
   agentColumnId,
@@ -13,6 +13,12 @@ import {
 import type { ColumnKind, ColumnRow, RunRow, StageDef, TicketRow, TicketStatus } from "./types";
 import { redactSecrets } from "./security";
 import type { StoreRun } from "./db";
+import {
+  ensureBoardsMigrated,
+  getActiveBoard,
+  getActiveWorkstreamId,
+  setActiveWorkstreamOnBoard,
+} from "./boards";
 
 function mapColumn(row: {
   id: string;
@@ -45,6 +51,7 @@ function mapTicket(row: {
   prevent_auto_advance: number;
   comment_count: number;
   workstream_id?: string | null;
+  board_id?: string | null;
   branch: string | null;
   worktree_path: string | null;
   last_worktree_path?: string | null;
@@ -70,6 +77,7 @@ function mapTicket(row: {
     preventAutoAdvance: Boolean(row.prevent_auto_advance),
     commentCount: row.comment_count,
     workstreamId: row.workstream_id ?? null,
+    boardId: row.board_id ?? null,
     branch: row.branch,
     worktreePath: row.worktree_path,
     lastWorktreePath: row.last_worktree_path ?? null,
@@ -95,7 +103,7 @@ export function listColumns(): ColumnRow[] {
 
 /** Columns visible for a workstream viewport (system + that stream's stages). */
 export function listVisibleColumns(workstreamId?: string | null): ColumnRow[] {
-  const wsId = workstreamId || getSettings().activeWorkstreamId || "feature";
+  const wsId = workstreamId || getActiveWorkstreamId();
   return listColumns().filter(
     (c) => c.kind !== "agent" || c.workstreamId === wsId,
   );
@@ -108,14 +116,21 @@ export function listTickets(): TicketRow[] {
     .map(mapTicket);
 }
 
-/** Tickets belonging to the active workstream (null workstreamId only in inbox). */
+/** Tickets for the active board (isolated). */
+export function listTicketsForBoard(boardId?: string | null): TicketRow[] {
+  const bid = boardId || getActiveBoard().id;
+  return listTickets().filter((t) => (t.boardId || "default") === bid);
+}
+
+/** Tickets belonging to the active workstream on the active board. */
 export function listTicketsForWorkstream(workstreamId?: string | null): TicketRow[] {
-  const wsId = workstreamId || getSettings().activeWorkstreamId || "feature";
+  const wsId = workstreamId || getActiveWorkstreamId();
+  const boardId = getActiveBoard().id;
   const cols = listColumns();
   const inboxId = cols.find((c) => c.kind === "inbox")?.id;
-  return listTickets().filter((t) => {
+  return listTicketsForBoard(boardId).filter((t) => {
     if (t.workstreamId === wsId) return true;
-    // Unassigned inbox tickets appear on every stream until claimed
+    // Unassigned inbox tickets on this board appear until claimed
     if (!t.workstreamId && t.columnId === inboxId) return true;
     return false;
   });
@@ -314,39 +329,49 @@ export function syncWorkstreamColumns(workstreamId: string) {
   return listVisibleColumns(workstreamId);
 }
 
-/** Sync all known workstreams + backfill ticket workstream ids. */
+/** Sync all known workstreams + backfill ticket workstream/board ids. */
 export function ensureWorkstreamsReady() {
   ensureBaseColumns();
+  ensureBoardsMigrated();
   const streams = listWorkstreams();
-  const settings = getSettings();
+  const board = getActiveBoard();
+  const allowed = new Set(
+    board.workstreamIds.length
+      ? board.workstreamIds
+      : streams.map((w) => w.id),
+  );
   const active =
-    streams.find((w) => w.id === settings.activeWorkstreamId)?.id ||
+    streams.find((w) => w.id === board.activeWorkstreamId && allowed.has(w.id))?.id ||
+    streams.find((w) => allowed.has(w.id))?.id ||
     streams.find((w) => w.id === "feature")?.id ||
     streams[0]?.id ||
     "feature";
 
-  if (settings.activeWorkstreamId !== active) {
-    saveSettings({ ...settings, activeWorkstreamId: active });
+  if (board.activeWorkstreamId !== active) {
+    setActiveWorkstreamOnBoard(active);
   }
 
   for (const ws of streams) {
-    syncWorkstreamColumns(ws.id);
+    if (allowed.has(ws.id)) syncWorkstreamColumns(ws.id);
   }
 
-  // Backfill tickets missing workstreamId → feature (or infer from column)
+  const boardId = getActiveBoard().id;
   updateStore((s) => {
     for (const t of s.tickets) {
+      if (!t.board_id) t.board_id = boardId;
       if (t.workstream_id) continue;
       const col = s.columns.find((c) => c.id === t.column_id);
       if (col?.workstream_id) {
         t.workstream_id = col.workstream_id;
       } else {
-        t.workstream_id = "feature";
+        t.workstream_id = active;
       }
     }
   });
 
   return {
+    activeBoardId: boardId,
+    activeBoard: getActiveBoard(),
     activeWorkstreamId: active,
     columns: listVisibleColumns(active),
     tickets: listTicketsForWorkstream(active),
@@ -357,14 +382,13 @@ export function setActiveWorkstream(workstreamId: string) {
   const ws = getWorkstream(workstreamId);
   if (!ws) throw new Error(`Workstream "${workstreamId}" not found`);
   syncWorkstreamColumns(workstreamId);
-  const settings = getSettings();
-  saveSettings({ ...settings, activeWorkstreamId: workstreamId });
+  setActiveWorkstreamOnBoard(workstreamId);
   return ensureWorkstreamsReady();
 }
 
 /** @deprecated Prefer syncWorkstreamColumns — kept for columns API compatibility. */
 export function addAgentColumn(agentId: string, title: string, workstreamId?: string) {
-  const wsId = workstreamId || getSettings().activeWorkstreamId || "feature";
+  const wsId = workstreamId || getActiveWorkstreamId();
   const ws = getWorkstream(wsId);
   if (!ws) throw new Error("Workstream not found");
   const has = ws.stages.some((s) => s.kind === "agent" && s.agentId === agentId);
@@ -542,10 +566,14 @@ export function nextPosition(columnId: string) {
 }
 
 export function insertTicket(
-  ticket: Omit<TicketRow, "createdAt" | "updatedAt" | "position"> & { position?: number },
+  ticket: Omit<TicketRow, "createdAt" | "updatedAt" | "position" | "boardId"> & {
+    position?: number;
+    boardId?: string | null;
+  },
 ) {
   const now = new Date().toISOString();
   const position = ticket.position ?? nextPosition(ticket.columnId);
+  const boardId = ticket.boardId || getActiveBoard().id;
   updateStore((s) => {
     s.tickets.push({
       id: ticket.id,
@@ -558,6 +586,7 @@ export function insertTicket(
       prevent_auto_advance: ticket.preventAutoAdvance ? 1 : 0,
       comment_count: ticket.commentCount,
       workstream_id: ticket.workstreamId,
+      board_id: boardId,
       branch: ticket.branch,
       worktree_path: ticket.worktreePath,
       last_worktree_path: ticket.lastWorktreePath,
@@ -592,6 +621,7 @@ export function updateTicket(id: string, patch: Partial<TicketRow>) {
     t.prevent_auto_advance = next.preventAutoAdvance ? 1 : 0;
     t.comment_count = next.commentCount;
     t.workstream_id = next.workstreamId;
+    t.board_id = next.boardId;
     t.branch = next.branch;
     t.worktree_path = next.worktreePath;
     t.last_worktree_path = next.lastWorktreePath;
@@ -643,7 +673,7 @@ export function reorderColumns(orderedIds: string[]) {
 
 /** Stage columns for a ticket's workstream, in order. */
 export function listAgentColumnsForTicket(ticket: TicketRow): ColumnRow[] {
-  const wsId = ticket.workstreamId || getSettings().activeWorkstreamId || "feature";
+  const wsId = ticket.workstreamId || getActiveWorkstreamId();
   syncWorkstreamColumns(wsId);
   const ws = getWorkstream(wsId);
   if (!ws) return [];

@@ -20,7 +20,7 @@ import {
   arrayMove,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import type { AgentDef, BoardSettings, ColumnRow, TicketRow, WorkstreamDef } from "@/lib/types";
+import type { AgentDef, BoardDef, BoardSettings, ColumnRow, TicketRow, WorkstreamDef } from "@/lib/types";
 import { Shell } from "./Shell";
 import { MarkdownView } from "./MarkdownView";
 import Link from "next/link";
@@ -31,6 +31,9 @@ type BoardPayload = {
   tickets: TicketRow[];
   agents: Omit<AgentDef, "prompt">[];
   workstreams: Omit<WorkstreamDef, "notes" | "filePath">[];
+  boards?: BoardDef[];
+  activeBoardId?: string;
+  activeBoard?: BoardDef;
   activeWorkstreamId: string;
   dayCostUsd?: number;
   ticketCosts?: Record<string, number>;
@@ -231,6 +234,27 @@ export function BoardApp() {
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       await refresh();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function switchBoard(id: string) {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/boards", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "activate", id }),
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        throw new Error((j as { error?: string }).error || "Board switch failed");
+      }
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
@@ -449,6 +473,23 @@ export function BoardApp() {
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <label className="flex items-center gap-2 text-sm">
           <span className="text-xs font-medium tracking-wide uppercase opacity-60">
+            Board
+          </span>
+          <select
+            className="rounded-full border border-[var(--rail-line)] bg-white/80 px-3 py-1.5 text-sm font-medium"
+            value={data.activeBoardId || data.activeBoard?.id || data.settings.activeBoardId || "default"}
+            disabled={busy || !(data.boards || []).length}
+            onChange={(e) => switchBoard(e.target.value)}
+          >
+            {(data.boards || []).map((b) => (
+              <option key={b.id} value={b.id}>
+                {b.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="flex items-center gap-2 text-sm">
+          <span className="text-xs font-medium tracking-wide uppercase opacity-60">
             Workstream
           </span>
           <select
@@ -464,6 +505,15 @@ export function BoardApp() {
             ))}
           </select>
         </label>
+        <Link
+          href="/settings?tab=boards"
+          className="rounded-full border border-[var(--rail-line)] bg-white/60 px-3 py-1.5 text-xs font-medium"
+          title={data.activeBoard?.repoPath || "Configure boards"}
+        >
+          {data.activeBoard?.repoPath
+            ? data.activeBoard.repoPath.split("/").slice(-2).join("/")
+            : "Set repo"}
+        </Link>
         <Link
           href="/workstreams"
           className="rounded-full border border-[var(--rail-line)] bg-white/60 px-3 py-1.5 text-xs font-medium"
@@ -517,6 +567,10 @@ export function BoardApp() {
           {data.settings.parallelRuns ? "parallel on" : "serial"}
           {" · "}
           auto-advance {data.settings.autoAdvance ? "on" : "off"}
+          {" · "}
+          {(data.boards || []).find((b) => b.id === data.activeBoardId)?.name ||
+            data.activeBoard?.name ||
+            data.activeBoardId}
           {" · "}
           {(data.workstreams || []).find((w) => w.id === data.activeWorkstreamId)?.name ||
             data.activeWorkstreamId}

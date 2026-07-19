@@ -1,7 +1,12 @@
 import fs from "fs";
 import path from "path";
 import { DATA_DIR, ensureDirs } from "./paths";
-import { DEFAULT_SETTINGS, type BoardSettings } from "./types";
+import {
+  DEFAULT_BOARD,
+  DEFAULT_SETTINGS,
+  type BoardDef,
+  type BoardSettings,
+} from "./types";
 
 const STORE_PATH = path.join(DATA_DIR, "store.json");
 
@@ -26,6 +31,7 @@ export type StoreRun = {
 
 export type Store = {
   settings: BoardSettings;
+  boards?: BoardDef[];
   columns: Array<{
     id: string;
     kind: string;
@@ -46,6 +52,7 @@ export type Store = {
     prevent_auto_advance: number;
     comment_count: number;
     workstream_id?: string | null;
+    board_id?: string | null;
     branch: string | null;
     worktree_path: string | null;
     last_worktree_path?: string | null;
@@ -73,11 +80,46 @@ export type Store = {
 function emptyStore(): Store {
   return {
     settings: { ...DEFAULT_SETTINGS },
+    boards: [{ ...DEFAULT_BOARD }],
     columns: [],
     tickets: [],
     runs: [],
     job_state: { lastTickAt: null, lastFired: {} },
   };
+}
+
+/** Ensure boards exist and tickets have board_id (idempotent). */
+export function migrateBoardsInStore(store: Store, workstreamIds: string[] = []): void {
+  if (!store.settings) store.settings = { ...DEFAULT_SETTINGS };
+  if (!store.settings.activeBoardId) {
+    store.settings.activeBoardId = DEFAULT_SETTINGS.activeBoardId;
+  }
+
+  if (!store.boards || store.boards.length === 0) {
+    const wsIds =
+      workstreamIds.length > 0
+        ? workstreamIds
+        : ["feature", "bug", "research", "dotnet-feature", "demo-job"];
+    const activeWs = store.settings.activeWorkstreamId || "feature";
+    store.boards = [
+      {
+        id: "default",
+        name: "Default",
+        color: "#3d5a80",
+        repoPath: store.settings.repoPath || "",
+        baseRef: store.settings.baseRef || "main",
+        worktreeRoot: store.settings.worktreeRoot || undefined,
+        branchPrefix: store.settings.branchPrefix || undefined,
+        workstreamIds: wsIds,
+        activeWorkstreamId: activeWs,
+      },
+    ];
+    store.settings.activeBoardId = "default";
+  }
+
+  for (const t of store.tickets || []) {
+    if (!t.board_id) t.board_id = store.settings.activeBoardId || "default";
+  }
 }
 
 export function readStore(): Store {
@@ -90,6 +132,7 @@ export function readStore(): Store {
   const parsed = JSON.parse(fs.readFileSync(STORE_PATH, "utf8")) as Store;
   if (!parsed.job_state) parsed.job_state = { lastTickAt: null, lastFired: {} };
   if (!parsed.runs) parsed.runs = [];
+  migrateBoardsInStore(parsed);
   return parsed;
 }
 
@@ -118,6 +161,7 @@ export function getSettings(): BoardSettings {
   if (merged.requireApproveForImportedTickets == null) {
     merged.requireApproveForImportedTickets = true;
   }
+  if (!merged.activeBoardId) merged.activeBoardId = "default";
   return merged;
 }
 

@@ -2,6 +2,7 @@ import { getConnector } from "./connectors";
 import { getSettings } from "./db";
 import { assertSafeOutboundUrl } from "./security";
 import type { TicketRow } from "./types";
+import { getActiveWorkstreamId } from "./boards";
 
 export type AdoWorkItem = {
   id: string;
@@ -41,7 +42,7 @@ export async function importAdoWorkItems(opts?: {
           title: "Demo ADO work item",
           description: "## Description\n\nImported in demo mode (enable ADO connector + PAT for live).\n",
           labels: ["ado", "imported"],
-          workstreamId: settings.activeWorkstreamId || "feature",
+          workstreamId: getActiveWorkstreamId(),
           commentCount: 0,
         },
       ],
@@ -81,6 +82,7 @@ export async function importAdoWorkItems(opts?: {
         fields?: Record<string, unknown>;
       }>;
     };
+    const activeWs = getActiveWorkstreamId();
     const items: AdoWorkItem[] = (batch.value || []).map((w) => {
       const fields = w.fields || {};
       const tags = String(fields["System.Tags"] || "")
@@ -93,7 +95,7 @@ export async function importAdoWorkItems(opts?: {
         title: String(fields["System.Title"] || `WI ${w.id}`),
         description: String(fields["System.Description"] || ""),
         labels: ["ado", ...tags.filter((t) => !t.startsWith("workstream:"))],
-        workstreamId: wsLabel?.replace("workstream:", "") || settings.activeWorkstreamId,
+        workstreamId: wsLabel?.replace("workstream:", "") || activeWs,
         commentCount: 0,
       };
     });

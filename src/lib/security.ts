@@ -215,6 +215,7 @@ export const boardSettingsSchema = z.object({
   adoWriteBack: z.boolean().default(true),
   demoMode: z.boolean().default(true),
   activeWorkstreamId: z.string().max(48).default("feature"),
+  activeBoardId: z.string().max(48).default("default"),
   subAgentsEnabled: z.boolean().default(true),
   maxSubAgentDepth: z.number().int().min(0).max(2).default(1),
   subAgentsParallel: z.boolean().default(false),
@@ -238,6 +239,9 @@ export function parseBoardSettings(input: unknown): BoardSettings {
   const parsed = boardSettingsSchema.parse(raw);
   if (parsed.activeWorkstreamId && !isSafeId(parsed.activeWorkstreamId)) {
     parsed.activeWorkstreamId = "feature";
+  }
+  if (parsed.activeBoardId && !isSafeId(parsed.activeBoardId)) {
+    parsed.activeBoardId = "default";
   }
   if (parsed.repoPath) {
     parsed.repoPath = assertSafeRepoPath(parsed.repoPath);

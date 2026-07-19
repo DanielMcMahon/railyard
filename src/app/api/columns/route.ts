@@ -9,7 +9,7 @@ import {
   listVisibleColumns,
 } from "@/lib/board";
 import { getAgent } from "@/lib/agents";
-import { getSettings } from "@/lib/db";
+import { getActiveWorkstreamId } from "@/lib/boards";
 
 export const dynamic = "force-dynamic";
 
@@ -34,7 +34,7 @@ export async function POST(req: Request) {
       const columns = moveAgentColumn(String(body.columnId), direction as -1 | 1);
       return NextResponse.json({
         columns,
-        visible: listVisibleColumns(getSettings().activeWorkstreamId),
+        visible: listVisibleColumns(getActiveWorkstreamId()),
       });
     } catch (err) {
       return NextResponse.json(
@@ -54,7 +54,7 @@ export async function POST(req: Request) {
       const columns = reorderAgentColumns(columnIds);
       return NextResponse.json({
         columns,
-        visible: listVisibleColumns(getSettings().activeWorkstreamId),
+        visible: listVisibleColumns(getActiveWorkstreamId()),
       });
     } catch (err) {
       return NextResponse.json(

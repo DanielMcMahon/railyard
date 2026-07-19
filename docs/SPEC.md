@@ -105,19 +105,36 @@ Tools like Vibe Kanban, Conductor, Emdash emphasize parallel runners and review 
 
 | Route | Purpose |
 |---|---|
-| `/` | **Board** — workstream viewport, kanban columns, ticket cards, drawer |
+| `/` | **Board** — board switcher, workstream viewport, kanban, ticket drawer |
 | `/inbox` | **Human inbox** — Action Requests + workflow Alerts feed |
 | `/archive` | **Archive** — searchable immutable case files / execution reports |
 | `/agents` | Agent library CRUD (markdown prompts under `agents/`) |
 | `/workstreams` | Pipeline/job templates: stages, git, complete action, routing |
 | `/jobs` | Job stream queue + **Tick now** |
-| `/settings` | Board settings, providers, connectors (tabs; `/providers` & `/connectors` redirect) |
+| `/settings` | **Boards** (repo per board), Runtime budgets, providers, connectors |
 
 **Shell nav:** Board · Inbox · Archive · Agents · Workstreams · Jobs · Settings
 
 ---
 
 ## 6. Core domain concepts
+
+### 6.0 Board (workspace)
+
+A **board** is a named workspace with its own default git repo and a selected set of workstreams. Tickets are **isolated per board** (`boardId`).
+
+| Field | Role |
+|---|---|
+| `id`, `name`, `color` | Identity / UI |
+| `repoPath`, `baseRef` | Default git target for tickets on this board |
+| `worktreeRoot`, `branchPrefix` | Optional git layout overrides |
+| `workstreamIds[]` | Which shared workstream templates this board uses |
+| `activeWorkstreamId` | Kanban viewport within the board |
+
+- Stored in `data/store.json` (`boards[]`); `settings.activeBoardId` selects the active board.
+- **Agents** and global budgets/demo remain shared across boards.
+- Migration: if no boards exist, a `default` board is created from legacy `settings.repoPath` / `activeWorkstreamId`.
+- Git resolve priority: `ticket.repoPath` → **board `repoPath`** → legacy settings → sandbox. Creating/running a ticket stamps `repoPath` from the board.
 
 ### 6.1 Ticket
 
@@ -126,7 +143,7 @@ A unit of work.
 - **File:** `tickets/<id>.md` (frontmatter + body).
 - **Board row:** stored in `data/store.json` (`tickets[]`).
 - **Statuses:** `inbox` | `queued` | `running` | `needs_human` | `pending_review` | `complete`.
-- **Key fields:** title, labels, `workstreamId`, branch, worktree paths, repo/base/head, PR URL, failure reason, changed files JSON, prevent-auto-advance flag, optional external/ADO id.
+- **Key fields:** title, labels, `boardId`, `workstreamId`, branch, worktree paths, repo/base/head, PR URL, failure reason, changed files JSON, prevent-auto-advance flag, optional external/ADO id.
 
 ### 6.2 Column
 
@@ -139,7 +156,7 @@ Board columns:
 | `needs_human` | Manual intervention / hard stop |
 | `complete` | UI title **Review** — holds `pending_review` and finished tickets |
 
-Agent columns are scoped by `workstreamId` (`col-ws-<stream>-<stageKey>`). The board viewport shows system columns + stages of the **active workstream**.
+Agent columns are scoped by `workstreamId` (`col-ws-<stream>-<stageKey>`). The board viewport shows system columns + stages for workstreams on the **active board** (active workstream within that board).
 
 ### 6.3 Agent (library)
 
@@ -149,9 +166,11 @@ Markdown under `agents/*.md`:
 id, name, runtime, model, autonomous, color, canSpawn?
 ```
 
-Body = system/prompt text. Shared across workstreams. Default library includes: planner, implementer, reviewer, triage, reproduce, fix, verify, scope, spike, writeup (and similar).
+Body = system/prompt text. Shared across workstreams **and boards**. Default library includes: planner, implementer, reviewer, triage, reproduce, fix, verify, scope, spike, writeup (and similar).
 
 ### 6.4 Workstream
+
+Shared pipeline/job **templates** under `workstreams/*.md`. Each board *selects* which templates it uses (`workstreamIds`). The same “feature” pipeline can run against different repos on different boards.
 
 Markdown under `workstreams/*.md`:
 
@@ -335,7 +354,7 @@ Prompts wrap ticket/sub-agent content as untrusted delimiters (`<<<UNTRUSTED_*>>
 
 ## 11. Git & worktrees
 
-- Settings: `repoPath` (must be under `~/Documents` or `$HOME` and contain `.git`), `baseRef`, `worktreeRoot` (`.worktrees`), `branchPrefix` (`agent/`).
+- Per board: `repoPath` (must be under `~/Documents` or `$HOME` and contain `.git`), `baseRef`, optional `worktreeRoot` / `branchPrefix`. Legacy settings fields remain as fallbacks only.
 - Demo: can use sandbox repo under `data/sandbox-repo/` when no repo configured (seed/scripts).
 - Per ticket: branch + worktree path; on complete may set `lastWorktreePath` after prune.
 - Advisory lock: `.worktrees/<id>/.railyard-lock` (ticketId, pid, timestamp); stale PID best-effort clear.
@@ -437,7 +456,8 @@ Railyard/
 
 | Method | Path | Role |
 |---|---|---|
-| GET | `/api/board` | Settings, visible columns, tickets, agents, workstreams, dayCost, ticketCosts |
+| GET | `/api/board` | Settings, boards, activeBoard, visible columns, tickets (board-scoped), agents, workstreams, dayCost, ticketCosts |
+| GET/POST | `/api/boards` | List / create / update / activate / delete boards |
 | PATCH/POST | `/api/tickets` | create, move, resume/retry, schedule, update, delete, **approve**, **requestChanges**, **reject** |
 | GET/POST | `/api/actions` | Human ActionRequest queue (list open / resolve) |
 | GET/POST | `/api/alerts` | Workflow alert feed (list / acknowledge) |
@@ -462,14 +482,15 @@ Railyard/
 
 | Setting | Default (conceptually) | Role |
 |---|---|---|
-| `repoPath`, `baseRef` | "", `main` | Git target |
+| `activeBoardId` | `default` | Active workspace |
+| `repoPath`, `baseRef` | "", `main` | **Deprecated** — prefer board fields; kept for migration |
 | `autoAdvance` | true | Advance/route after success |
 | `parallelRuns` | false | Parallel scheduling mode |
-| `worktreeRoot`, `branchPrefix` | `.worktrees`, `agent/` | Worktree layout |
+| `worktreeRoot`, `branchPrefix` | `.worktrees`, `agent/` | Global fallbacks (board may override) |
 | `defaultRuntime`, `defaultModel` | cursor / composer… | Defaults |
 | `autonomous` | true | YOLO-style agent flag AND’d with agent.autonomous |
 | `demoMode` | true | Force demo harness |
-| `activeWorkstreamId` | `feature` | Board viewport |
+| `activeWorkstreamId` | `feature` | **Deprecated** — prefer board.activeWorkstreamId |
 | Sub-agent caps | depth 1, rounds 2, etc. | Spawn gates |
 | `budgetPerTicketUsd` / `budgetPerDayUsd` | 5 / 25 | Spend ceilings |
 | `budgetHardStop` | true | Refuse runs when over |

@@ -15,15 +15,16 @@ Open **http://127.0.0.1:3000** (loopback only — see `docs/SECURITY.md`).
 
 ## Try this
 
-1. **Workstream** dropdown — Feature, Bug, Research, or **.NET feature** (build + test validators).
-2. Drag a ticket through agent stages — demo/runtime runs and auto-advances within the stream.
-3. Pipeline ends in **Review** (`pending_review`), not auto-PR. Use **Approve & finish**, **Request changes**, or **Reject**.
-4. Configure **onFailure / onSuccess** per stage (and Request-changes → planner) under Workstreams — see `docs/ROUTING.md` and `docs/WORKFLOW.md`.
-5. Watch **day $** in the board header and cost chips on cards (Settings → budgets + hard-stop).
-6. **Workstreams** — edit stages; add **+ dotnet verify** command gates; create `kind: job` streams with cron.
-7. **Jobs** — tick cron job streams (`POST /api/jobs/tick`).
-8. **Settings** — providers, connectors, budgets, sub-agent gates. ADO import: `POST /api/import` `{ "action": "ado" }`.
-9. **Workflow tests** — `npm test` (graph routing, validators, budget/spawn gates, event replay).
+1. **Settings → Boards** — create a board per repo (e.g. BloodBike Web vs MAUI); set absolute `repoPath` and which workstreams it uses.
+2. **Board** dropdown on the kanban — switch workspace first, then **Workstream** within that board.
+3. Drag a ticket through agent stages — demo/runtime runs and auto-advances within the stream (tickets stay on their board).
+4. Pipeline ends in **Review** (`pending_review`), not auto-PR. Use **Approve & finish**, **Request changes**, or **Reject**.
+5. Configure **onFailure / onSuccess** per stage (and Request-changes → planner) under Workstreams — see `docs/ROUTING.md` and `docs/WORKFLOW.md`.
+6. Watch **day $** in the board header and cost chips on cards (Settings → Runtime → budgets + hard-stop).
+7. **Workstreams** — edit stages; badges show which boards use each stream; add **+ dotnet verify** command gates; create `kind: job` streams with cron.
+8. **Jobs** — tick cron job streams (`POST /api/jobs/tick`).
+9. **Settings** — Boards, Runtime, providers, connectors. ADO import: `POST /api/import` `{ "action": "ado" }`.
+10. **Workflow tests** — `npm test` (graph routing, validators, budget/spawn gates, event replay).
 
 ## Layout
 

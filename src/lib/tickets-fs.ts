@@ -57,6 +57,7 @@ export function updateTicketMarkdown(
     externalId?: string | null;
     source?: string | null;
     workstreamId?: string | null;
+    boardId?: string | null;
   },
 ) {
   const { data, content } = readTicketMarkdown(filePath);
@@ -70,6 +71,7 @@ export function updateTicketMarkdown(
     source: opts.source !== undefined ? opts.source : data.source,
     workstreamId:
       opts.workstreamId !== undefined ? opts.workstreamId : data.workstreamId,
+    boardId: opts.boardId !== undefined ? opts.boardId : data.boardId,
   };
   const body = opts.body !== undefined ? opts.body : content;
   fs.writeFileSync(filePath, matter.stringify(body.trim() + "\n", nextData), "utf8");

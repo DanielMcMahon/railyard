@@ -52,8 +52,26 @@ export type JobTrigger =
   | { type: "manual" }
   | { type: "connector_poll"; connectorId: string };
 
-export interface BoardSettings {
+/** Named workspace: one default repo + selected workstreams. Tickets are isolated per board. */
+export interface BoardDef {
+  id: string;
+  name: string;
+  color: string;
+  /** Absolute path to the git repo agents work in (empty = sandbox). */
   repoPath: string;
+  baseRef: string;
+  worktreeRoot?: string;
+  branchPrefix?: string;
+  /** Workstream template ids available on this board. */
+  workstreamIds: string[];
+  /** Active workstream viewport within this board. */
+  activeWorkstreamId: string;
+}
+
+export interface BoardSettings {
+  /** @deprecated Prefer board.repoPath — kept for migration / settings UI fallback. */
+  repoPath: string;
+  /** @deprecated Prefer board.baseRef */
   baseRef: string;
   autoAdvance: boolean;
   parallelRuns: boolean;
@@ -69,8 +87,10 @@ export interface BoardSettings {
   adoQuery: string;
   adoWriteBack: boolean;
   demoMode: boolean;
-  /** Active board viewport — which workstream's agent columns to show. */
+  /** @deprecated Prefer board.activeWorkstreamId */
   activeWorkstreamId: string;
+  /** Active board workspace id. */
+  activeBoardId: string;
   /** Master switch — when false, all spawn blocks are ignored. */
   subAgentsEnabled: boolean;
   /** 0 = stage agent only; 1 = stage may spawn children; 2 = children may spawn, etc. */
@@ -207,6 +227,8 @@ export interface TicketRow {
   commentCount: number;
   /** Which workstream pipeline this ticket follows */
   workstreamId: string | null;
+  /** Which board workspace owns this ticket */
+  boardId: string | null;
   branch: string | null;
   worktreePath: string | null;
   /** Last worktree path before Complete pruned it */
@@ -276,6 +298,7 @@ export const DEFAULT_SETTINGS: BoardSettings = {
   adoWriteBack: true,
   demoMode: true,
   activeWorkstreamId: "feature",
+  activeBoardId: "default",
   subAgentsEnabled: true,
   maxSubAgentDepth: 1,
   subAgentsParallel: false,
@@ -286,6 +309,16 @@ export const DEFAULT_SETTINGS: BoardSettings = {
   budgetPerDayUsd: 25,
   budgetHardStop: true,
   requireApproveForImportedTickets: true,
+};
+
+export const DEFAULT_BOARD: BoardDef = {
+  id: "default",
+  name: "Default",
+  color: "#3d5a80",
+  repoPath: "",
+  baseRef: "main",
+  workstreamIds: [],
+  activeWorkstreamId: "feature",
 };
 
 /** Heuristic USD per 1k tokens when provider does not report cost. */

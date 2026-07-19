@@ -7,6 +7,7 @@ import {
   updateWorkstream,
 } from "@/lib/workstreams";
 import { setActiveWorkstream, syncWorkstreamColumns } from "@/lib/board";
+import { boardsUsingWorkstream } from "@/lib/boards";
 import type { CompleteAction, JobTrigger, WorkstreamKind } from "@/lib/types";
 import { normalizeStages } from "@/lib/workstreams";
 
@@ -14,7 +15,14 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   return NextResponse.json({
-    workstreams: listWorkstreams(),
+    workstreams: listWorkstreams().map((w) => ({
+      ...w,
+      usedByBoards: boardsUsingWorkstream(w.id).map((b) => ({
+        id: b.id,
+        name: b.name,
+        color: b.color,
+      })),
+    })),
   });
 }
 

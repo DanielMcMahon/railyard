@@ -1,5 +1,6 @@
 import { getSettings } from "./db";
 import { getAgent } from "./agents";
+import { getActiveBoard, getActiveWorkstreamId, getBoard } from "./boards";
 import {
   appendRunEvent,
   appendRunLog,
@@ -11,6 +12,7 @@ import {
   listColumns,
   listRunsForTicket,
   listTickets,
+  listTicketsForBoard,
   listVisibleColumns,
   moveTicket,
   updateTicket,
@@ -146,8 +148,7 @@ function resolveTicketWorkstream(ticket: { workstreamId: string | null; columnId
     const ws = getWorkstream(col.workstreamId);
     if (ws) return ws;
   }
-  const settings = getSettings();
-  return getWorkstream(settings.activeWorkstreamId || "feature");
+  return getWorkstream(getActiveWorkstreamId());
 }
 
 type RunCtx = {
@@ -571,11 +572,15 @@ export async function runAgentOnTicket(
   const column = getColumn(ticket.columnId);
   if (!column?.agentId) throw new Error("Ticket is not on an agent column");
 
-  const settings = getSettings();
+  const board = getActiveBoard();
   const ws = resolveTicketWorkstream(ticket);
-  const workstreamId = ws?.id || column.workstreamId || settings.activeWorkstreamId || "feature";
-  if (!ticket.workstreamId) {
-    updateTicket(ticketId, { workstreamId });
+  const workstreamId = ws?.id || column.workstreamId || getActiveWorkstreamId();
+  const boardId = ticket.boardId || board.id;
+  if (!ticket.workstreamId || !ticket.boardId) {
+    updateTicket(ticketId, {
+      workstreamId: ticket.workstreamId || workstreamId,
+      boardId,
+    });
   }
 
   const stage = ws ? findStage(ws, column.agentId) : null;
@@ -594,10 +599,11 @@ export async function runAgentOnTicket(
       if (!lock.ok) throw new Error(lock.reason);
       lockPath = lock.lockPath;
       updateTicket(ticketId, {
+        boardId,
         branch,
         worktreePath,
         repoPath: ensured.repo,
-        baseRef: settings.baseRef || "main",
+        baseRef: ticket.baseRef || board.baseRef || getSettings().baseRef || "main",
         workstreamId,
         status: "running",
         failureReason: opts?.mode === "retry" ? null : ticket.failureReason,
@@ -605,6 +611,7 @@ export async function runAgentOnTicket(
     } else {
       assertParallelSlot(ticketId, ticket.repoPath || workstreamId);
       updateTicket(ticketId, {
+        boardId,
         workstreamId,
         status: "running",
         failureReason: opts?.mode === "retry" ? null : ticket.failureReason,
@@ -1113,10 +1120,11 @@ export async function completeTicket(
 
   const completeAction = ws?.completeAction || "commit_and_pr";
   const useGit = ws?.git !== false && completeAction === "commit_and_pr";
-  const baseRef = ticket.baseRef || settings.baseRef || "main";
+  const board = (ticket.boardId && getBoard(ticket.boardId)) || getActiveBoard();
+  const baseRef = ticket.baseRef || board.baseRef || settings.baseRef || "main";
 
   let headSha: string | null = ticket.headSha;
-  let repo = ticket.repoPath || settings.repoPath || process.cwd();
+  let repo = ticket.repoPath || board.repoPath || settings.repoPath || process.cwd();
   let lastWorktreePath = ticket.worktreePath || ticket.lastWorktreePath;
   let changedFilesJson = ticket.changedFilesJson || "[]";
   let prUrl: string | null = ticket.prUrl;
@@ -1262,15 +1270,17 @@ export async function completeTicket(
 
 export async function scheduleBoard() {
   const settings = getSettings();
-  const wsId = settings.activeWorkstreamId || "feature";
+  const board = getActiveBoard();
+  const wsId = getActiveWorkstreamId();
+  const boardTickets = listTicketsForBoard(board.id);
   const cols = listVisibleColumns(wsId)
     .filter((c) => c.kind === "agent")
     .sort((a, b) => a.position - b.position);
 
   if (!settings.parallelRuns) {
-    if (listTickets().some((t) => t.status === "running")) return;
+    if (boardTickets.some((t) => t.status === "running")) return;
     for (const col of cols) {
-      const top = listTickets()
+      const top = boardTickets
         .filter(
           (t) =>
             t.columnId === col.id &&
@@ -1288,11 +1298,11 @@ export async function scheduleBoard() {
 
   // Parallel: one runner per column if worktree slot free
   for (const col of cols) {
-    const runningHere = listTickets().some(
+    const runningHere = boardTickets.some(
       (t) => t.columnId === col.id && t.status === "running",
     );
     if (runningHere) continue;
-    const top = listTickets()
+    const top = boardTickets
       .filter((t) => t.columnId === col.id && (t.status === "queued" || t.status === "inbox"))
       .sort((a, b) => a.position - b.position)[0];
     if (top) {

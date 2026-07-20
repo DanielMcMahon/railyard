@@ -358,6 +358,7 @@ Prompts wrap ticket/sub-agent content as untrusted delimiters (`<<<UNTRUSTED_*>>
 - Demo: can use sandbox repo under `data/sandbox-repo/` when no repo configured (seed/scripts).
 - Per ticket: branch + worktree path; on complete may set `lastWorktreePath` after prune.
 - Advisory lock: `.worktrees/<id>/.railyard-lock` (ticketId, pid, timestamp); stale PID best-effort clear.
+- Planner→implementer handoff: `.worktrees/<id>/.railyard/handoff/planner.md` (when present, implementer reads it to avoid re-exploration).
 - Diff API: ticket drawer “Paths & diff” via `/api/tickets/[id]/diff`.
 
 ---

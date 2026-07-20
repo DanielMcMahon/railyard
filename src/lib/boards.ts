@@ -40,7 +40,8 @@ export function ensureBoardsMigrated(): BoardDef[] {
       def.workstreamIds = wsIds;
     }
   });
-  return listBoards();
+  const store = readStore();
+  return (store.boards || []).map(normalizeBoard);
 }
 
 export function listBoards(): BoardDef[] {
